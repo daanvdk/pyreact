@@ -3,6 +3,7 @@ from contextvars import ContextVar, copy_context
 from contextlib import contextmanager
 
 from .node import to_node
+from .paths import Paths
 
 
 CONTEXT = ContextVar('context')
@@ -13,7 +14,7 @@ class Context:
     def __init__(self):
         self.path = None
         self.next_ref = None
-        self.rerender_paths = set()
+        self.rerender_paths = Paths()
         self.rerender_event = asyncio.Event()
 
         token = CONTEXT.set(self)
@@ -31,7 +32,7 @@ class Context:
             self.path = None
 
     def rerender(self, path):
-        self.rerender_paths.add(path)
+        self.rerender_paths[path] = None
         self.rerender_event.set()
         self.rerender_event.clear()
 
@@ -69,19 +70,31 @@ async def render(node):
 
         stack = []
 
-        for path in sorted(context.rerender_paths):
+        for path in context.rerender_paths:
+            print('target', path)
+
             while stack and (len(stack) > len(path) or stack[-1][0] != path[len(stack) - 1]):
                 key, node, pstate, presult = stack.pop()
+                print('pop', key)
+                print(node, pstate, presult)
                 state, result = node._inject(pstate, presult, key, state, result)
 
             for key in path[len(stack):]:
+                print('push', key)
+                print(node, state, result)
                 stack.append((key, node, state, result))
                 node, state, result = node._extract(state, result, key)
 
             state, result = context.run(list(path), node._rerender, state, result)
 
+        print('target', ())
+
         while stack:
             key, node, pstate, presult = stack.pop()
+            print('pop', key)
+            print(node, pstate, presult)
             state, result = node._inject(pstate, presult, key, state, result)
+
+        print('done', ())
 
         context.rerender_paths.clear()

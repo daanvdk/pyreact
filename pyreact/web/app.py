@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from ..node import to_node
 from ..tree import Tree, diff
 from .render import render
+from .session import Session, SESSION
 
 
 SCRIPT_PATH = Path(__file__).parent / 'app.js'
@@ -27,11 +28,15 @@ class App:
         if scope['path'] == '/_pyreact.js':
             return await self.http_file(scope, receive, send, SCRIPT_PATH)
 
-        session_id = str(uuid4())
-        trees = render(self._node, session_id)
-        tree = await anext(trees)
+        session = Session(scope)
+        token = SESSION.set(session)
+        try:
+            trees = render(self._node, session.id)
+            tree = await anext(trees)
+        finally:
+            SESSION.reset(token)
 
-        self._sessions[session_id] = tree, trees
+        self._sessions[session.id] = session, tree, trees
 
         await send({
             'type': 'http.response.start',
@@ -85,7 +90,7 @@ class App:
 
         session_id = scope['path'][1:]
         try:
-            node, nodes = self._sessions.pop(session_id)
+            session, node, nodes = self._sessions.pop(session_id)
         except KeyError:
             await send({'type': 'websocket.close'})
             return
@@ -93,11 +98,13 @@ class App:
         await send({'type': 'websocket.accept'})
             
         receive_fut = asyncio.create_task(receive())
+        actions_fut = asyncio.create_task(session.actions_event.wait())
         node_fut = asyncio.create_task(anext(nodes))
+
         try:
             while True:
                 await asyncio.wait(
-                    {receive_fut, node_fut},
+                    {receive_fut, actions_fut, node_fut},
                     return_when=asyncio.FIRST_COMPLETED,
                 )
 
@@ -113,29 +120,38 @@ class App:
                         b''
                     )
 
-                    target = Tree(None, {}, {(): node})
-                    for index in path:
-                        target = target[index]
-
-                    asyncio.get_running_loop().call_soon(
-                        target.props[f'on{event_type}'],
-                        SimpleNamespace(type=event_type, **data),
-                    )
+                    if event_type == 'pop_url':
+                        assert not path
+                        session.set_url(data)
+                    else:
+                        target = Tree(None, {}, {(): node})
+                        for index in path:
+                            target = target[index]
+                        handler = target.props[f'on{event_type}']
+                        event = SimpleNamespace(type=event_type, **data)
+                        asyncio.get_running_loop().call_soon(handler, event)
 
                     receive_fut = asyncio.create_task(receive())
 
+                actions = []
+
+                if actions_fut.done():
+                    actions.extend(session.actions)
+                    session.actions.clear()
+                    actions_fut = asyncio.create_task(session.actions_event.wait())
+
                 if node_fut.done():
                     new_node = node_fut.result()
-
-                    actions = list(diff(node, new_node))
-                    if actions:
-                        await send({
-                            'type': 'websocket.send',
-                            'text': json.dumps(actions, separators=(',', ':')),
-                        })
-
+                    actions.extend(diff(node, new_node))
                     node = new_node
                     node_fut = asyncio.create_task(anext(nodes))
+
+                if actions:
+                    await send({
+                        'type': 'websocket.send',
+                        'text': json.dumps(actions, separators=(',', ':')),
+                    })
+
         finally:
             receive_fut.cancel()
             node_fut.cancel()

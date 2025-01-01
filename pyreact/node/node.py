@@ -43,6 +43,10 @@ class Node(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def _unmount(self, state, result):
+        raise NotImplementedError
+
+    @abstractmethod
     def _extract(self, state, result, key):
         raise NotImplementedError
 

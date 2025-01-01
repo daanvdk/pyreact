@@ -23,6 +23,9 @@ class Text(Node):
     def _rerender(self, prev_state, prev_result):
         raise RuntimeError('Text cannot rerender')
 
+    def _unmount(self, state, result):
+        pass
+
     def _extract(self, state, result, key):
         raise KeyError(key)
 

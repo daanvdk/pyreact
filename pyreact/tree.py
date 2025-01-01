@@ -97,8 +97,6 @@ def clean_props(props):
             continue
         elif value is True:
             value = ''
-        elif callable(value):
-            value = 'handle(event)'
         cleaned[key] = str(value)
 
     return cleaned

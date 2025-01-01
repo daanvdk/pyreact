@@ -5,12 +5,17 @@ const socket = new WebSocket(`${HTTP_TO_WS[window.location.protocol]}//${window.
 const root = createTree(document);
 
 function createTree(node) {
+    if (node.value !== undefined) {
+        node.value = node.getAttribute('value') ?? '';
+    }
+
     const children = [];
     for (const child of node.childNodes) {
         if (child.nodeType !== Node.DOCUMENT_TYPE_NODE) {
             children.push(createTree(child));
         }
     }
+
     return { node, children };
 }
 
@@ -57,9 +62,23 @@ function getPath(node) {
     return path;
 }
 
-function handle(event) {
+function handle(event, preventDefault, stopPropagation) {
+    if (preventDefault) {
+        event.preventDefault();
+    }
+    if (stopPropagation) {
+        event.stopPropagation();
+    }
+
     const path = getPath(event.currentTarget);
     const details = {};
+
+    switch (event.type) {
+        case 'input':
+            details.value = event.target.value;
+            break;
+    }
+
     socket.send(JSON.stringify([event.type, ...path, details]));
 }
 
@@ -93,13 +112,31 @@ socket.addEventListener('message', function (event) {
                 const value = path.pop();
                 const key = path.pop();
                 const tree = getTree(path);
-                tree.node.setAttribute(key, value);
+                if (key == 'value') {
+                    tree.node.value = value;
+                } else {
+                    tree.node.setAttribute(key, value);
+                }
             }; break;
 
             case 'unset': {
                 const key = path.pop();
                 const tree = getTree(path);
-                tree.node.removeAttribute(key);
+                if (key == 'value') {
+                    tree.node.value = '';
+                } else {
+                    tree.node.removeAttribute(key);
+                }
+            }; break;
+
+            case 'push_url': {
+                const url = path.pop();
+                history.pushState(null, '', url);
+            }; break;
+
+            case 'replace_url': {
+                const url = path.pop();
+                history.replaceState(null, '', url);
             }; break;
 
             default:
@@ -108,3 +145,6 @@ socket.addEventListener('message', function (event) {
     }
 });
 
+addEventListener('popstate', () => {
+    socket.send(JSON.stringify(['pop_url', window.location.pathname]));
+});

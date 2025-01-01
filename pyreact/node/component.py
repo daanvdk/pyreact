@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 from .node import Node, to_node
-from ..render import push_context, set_next_ref
+from ..render import push_context, set_next_ref, CONTEXT
 
 
 class Component(Node):
@@ -32,7 +32,8 @@ class Component(Node):
         with set_next_ref(next_ref):
             node = self._get_node()
 
-        state, result = node._render()
+        with push_context('render'):
+            state, result = node._render()
         return (tuple(refs), node, state), result
 
     def _rerender(self, state, result):
@@ -58,6 +59,9 @@ class Component(Node):
                     state, result = next_node._rerender(state, result)
             case 'incompatible':
                 with push_context('render'):
+                    prev_node._unmount(state, result)
+                    context = CONTEXT.get()
+                    context.rerender_paths.poptree(context.path)
                     state, result = next_node._render()
 
         return (refs, next_node, state), result
@@ -68,6 +72,13 @@ class Component(Node):
         else:
             props = self._props
         return to_node(self._render_func(**props))
+
+    def _unmount(self, state, result):
+        refs, node, state = state
+        with push_context('render'):
+            node._unmount(state, result)
+        for ref in refs:
+            pop_cleanup(ref)
 
     def _extract(self, state, result, key):
         if key != 'render':
@@ -80,6 +91,15 @@ class Component(Node):
             raise KeyError(key)
         refs, node, _ = state
         return (refs, node, child_state), child_result
+
+
+def pop_cleanup(ref):
+    try:
+        cleanup = ref.cleanup
+    except AttributeError:
+        return
+    del ref.cleanup
+    cleanup()
 
 
 def component(render_func):
